@@ -1,0 +1,44 @@
+if &compatible
+  set nocompatible
+endif
+
+
+let s:callback_store = #{ _id: 0, _callbacks: {} }
+
+function s:callback_store.register(callback) abort
+  if a:callback is v:null
+    return 0
+  endif
+
+  let self._id += 1
+  let self._callbacks[self._id] = a:callback
+  return self._id
+endfunction
+
+function s:callback_store.call(id) abort
+  if a:id == 0
+    return
+  endif
+
+  call call(self._callbacks[a:id], [])
+endfunction
+
+function s:invoke_expand_callback(id) abort
+  call s:callback_store.call(a:id)
+endfunction
+
+function InvokeExpand(bufstate, postlude = v:null) abort
+  const cursor = $"\<Cmd>call cursor({a:bufstate.cursor[0]}, {a:bufstate.cursor[1]})\<CR>"
+  const callback = $"\<Cmd>call {expand('<SID>')}invoke_expand_callback({s:callback_store.register(a:postlude)})\<CR>"
+
+  call deletebufline('%', 1, '$')
+  call setline(1, a:bufstate.text)
+  call feedkeys($"i{cursor}\<Plug>(pinsnip-expand){callback}\<ESC>", 'x')
+endfunction
+
+function GetBufState() abort
+  return #{
+    \ text: getline(1, '$'),
+    \ cursor: [line('.'), col('.')],
+    \ }
+endfunction

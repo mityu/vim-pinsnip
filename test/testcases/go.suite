@@ -1,0 +1,59 @@
+# vim: noexpandtab
+
+# if-err snippets
+input
+	if err<<+CURSOR+>>
+
+output
+	if err != nil {
+		return <<+CURSOR+>>
+	}
+
+input
+	if e<<+CURSOR+>>
+
+output
+	if err != nil {
+		return <<+CURSOR+>>
+	}
+
+input
+	if err := f(); err<<+CURSOR+>>
+
+output
+	if err := f(); err != nil {
+		return <<+CURSOR+>>
+	}
+
+input
+	if errret<<+CURSOR+>>
+
+output
+	if err != nil {
+		return err
+	}
+	<<+CURSOR+>>
+
+input
+	if errprint<<+CURSOR+>>
+
+output
+	if err != nil {
+		fmt.Println(err)
+	}
+	<<+CURSOR+>>
+
+# Generate function variable declaration
+input
+	f := func(x, y int) {<<+CURSOR+>>
+
+output
+	var f func(int, int)
+	f = func(x, y int) {<<+CURSOR+>>
+
+input
+	f := func(x, y int) (int, error) {<<+CURSOR+>>
+
+output
+	var f func(int, int) (int, error)
+	f = func(x, y int) (int, error) {<<+CURSOR+>>
