@@ -3,19 +3,6 @@ const s:suite = themis#suite('built-in snippets')
 call themis#func_alias(s:assert)
 call themis#func_alias(s:suite)
 
-function s:validate_test_case(file, secline, case) abort
-  let errs = []
-  if !has_key(a:case.before, 'cursor')
-    call add(errs, $'While parsing {a:file}: at line {a:secline.input}: No cursor position specified for this input section.')
-  endif
-  if !has_key(a:case.after, 'cursor')
-    call add(errs, $'While parsing {a:file}: at line {a:secline.output}: No cursor position specified for this output section.')
-  endif
-  if !empty(errs)
-    throw join(errs, "\n")
-  endif
-endfunction
-
 function s:parse_snip_line(text) abort
   const idx = stridx(a:text, g:pinsnip#cursor_placeholder)
   if idx == -1
@@ -26,74 +13,158 @@ function s:parse_snip_line(text) abort
   endif
 endfunction
 
-function s:parse_test_suite(file) abort
-  const sec = #{ none: 0, input: 1, output: 2, }
-  const lines = readfile(a:file)->map({ i, v -> [i + 1, v] })
+function s:parse_into_sections(lines) abort
+  const tactics = ['input', 'output', 'description', 'skip']
+  let sections = []
+  let sec = v:null
+  let skip_body = v:false
 
-  let cases = []
-  let section = sec.none
-  let secline = #{ input: 0, output: 0 }
+  let errs = []
+  let l:AddErr = {nr, msg -> add(errs, $'at line {nr}: {msg}')}
 
-  for [nr, text] in lines
-    let l:Err = {msg -> $'While parsing {file}: at line {nr}: {msg}'}
-    if text =~# '^\t'
-      if section == sec.none
-        throw l:Err('Started test case definition without section declaration.')
-      elseif section == sec.input || section == sec.output
-        let case = section == sec.input ? cases[-1].before : cases[-1].after
-        let [text, col] = s:parse_snip_line(text[1 :])
-
-        call add(case.text, text)
-        if col isnot v:null
-          if has_key(case, 'cursor')
-            throw l:Err('Cursor position specifier appears second time.')
-          endif
-          let case.cursor = [len(case.text), col]
-        endif
-      else
-        throw l:Err($'Internal error: unreachable: {expand('<stack>')}')
-      endif
-    elseif text =~# '^\s'
-      throw l:Err('Line must starts with non-whitespace or the tab character.')
-    elseif text =~? '^input\>'
-      if section == sec.input
-        throw l:Err('Missing corresponding output section for this input section.')
-      endif
-
-      " Validate the previous test case.
-      if !empty(cases)
-        call s:validate_test_case(a:file, secline, cases[-1])
-      endif
-
-      let section = sec.input
-      let secline.input = nr
-      let secline.output = 0
-      call add(cases, #{ before: #{ text: [] }, after: #{ text: [] }})
-    elseif text =~? '^output\>'
-      if section == sec.output
-        throw l:Err('Missing corresponding input section for this output section.')
-      endif
-      let section = sec.output
-      let secline.output = nr
-    elseif text =~# '^#'
-      " Do nothing
-    elseif text ==# ''
-      " The empty line means the end of section.
-      let section = sec.none
+  for [nr, text] in a:lines->mapnew({ i, v -> [i + 1, v] })
+    if skip_body && text =~# '^\t'
+      continue
     else
-      throw l:Err($'Unknown directive at the head of line: {matchstr(text, '^\S*')}')
+      let skip_body = v:false
+    endif
+
+    let tactic = tolower(matchstr(text, '^\w*'))
+    if index(tactics, tactic) != -1
+      if sec isnot v:null
+        call add(sections, sec)
+      endif
+      let sec = #{
+        \ line: nr,
+        \ tactic: tactic,
+        \ trailing_text: matchstr(text, '^\w*:\?\s*\zs.*$'),
+        \ body: [],
+        \ }
+    elseif text =~# '^\t'
+      " Section body text
+      if sec is v:null
+        let skip_body = v:true
+        call l:AddErr(nr, 'Section body definition appears out of section.')
+        continue
+      endif
+      call add(sec.body, text[1 :])
+    elseif text =~# '^#' || text ==# ''
+      " Empty line or comment line ends the current section.
+      if sec isnot v:null
+        call add(sections, sec)
+        let sec = v:null
+      endif
+    else
+      call l:AddErr(nr, 'Invalid format of line.')
     endif
   endfor
 
-  if !empty(cases)
-    call s:validate_test_case(a:file, secline, cases[-1])
+  if sec isnot v:null
+    call add(sections, sec)
   endif
+
+  if !empty(errs)
+    return [v:null, errs]
+  endif
+  return [sections, v:null]
+endfunction
+
+function s:parse_into_cases_from_sections(sections) abort
+  let errs = []
+  let cases = []
+  let case = {}
+  let erroneous = v:false
+  const l:AddErr = {nr, msg -> [extend(l:, #{ erroneous: v:true }, 'force'), add(errs, $'at line {nr}: {msg}')]}
+
+  for sec in a:sections
+    if has_key(case, sec.tactic)
+      call l:AddErr(sec.line, $'Duplicate section found: {sec.tactic}')
+    endif
+
+    if sec.tactic == 'output' && !has_key(case, 'input')
+      call l:AddErr(sec.line, 'No corresponding input section found for this output section.')
+      let case = {}
+    endif
+
+    if index(['input', 'output'], sec.tactic) == -1
+      if !empty(sec.body)
+        call l:AddErr(sec.line, $'Tactic "{sec.tactic}" cannot have section body.')
+      endif
+
+      if has_key(case, 'input') || has_key(case, 'output')
+        call l:AddErr(sec.line, $'Tactic "{sec.tactic}" must be placed before both "input" and "output" section.')
+      endif
+    endif
+
+    if !has_key(case, 'line')
+      let case.line = sec.line
+    endif
+
+    if !erroneous
+      if index(['input', 'output'], sec.tactic) == -1
+        let case[sec.tactic] = sec.trailing_text
+      else
+        let snip = #{ text: [] }
+        for [nr, text] in sec.body->mapnew({ i, v -> [sec.line + i + 1, v] })
+          let [text, col] = s:parse_snip_line(text)
+          call add(snip.text, text)
+          if col isnot v:null
+            if has_key(snip, 'cursor')
+              call l:AddErr(nr, 'Cursor position specifier appears two or more times.')
+            else
+              let snip.cursor = [len(snip.text), col]
+            endif
+          endif
+        endfor
+        if !has_key(snip, 'cursor')
+          call l:AddErr(sec.line, $'Cursor position is not specified in this {sec.tactic} section.')
+        endif
+
+        let case[sec.tactic] = snip
+      endif
+    endif
+
+    if has_key(case, 'input') && has_key(case, 'output')
+      call add(cases, case)
+      let case = {}
+    endif
+  endfor
+
+  if !empty(case)
+    call l:AddErr(case.line, $'Incomplete definition of section')
+  endif
+
+  if !empty(errs)
+    return [v:null, errs]
+  endif
+  return [cases, v:null]
+endfunction
+
+function s:parse_test_suite(file) abort
+  const l:ErrText = {errs -> $"While parsing {a:file}:\n{errs->mapnew({_, v -> $"\t{v}"})->join("\n")}"}
+
+  const [sections, errs] = s:parse_into_sections(readfile(a:file))
+  if errs isnot v:null
+    throw l:ErrText(errs)
+  endif
+
+  unlet errs
+  const [cases, errs] = s:parse_into_cases_from_sections(sections)
+  if errs isnot v:null
+    throw l:ErrText(errs)
+  endif
+
   return cases
 endfunction
 
 function s:run_test_case(case) abort
-  const info_on_failure = $"# INPUT: \n{a:case.before.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
-  call InvokeExpand(a:case.before, {-> s:assert.equals(GetBufState(), a:case.after, info_on_failure)})
+  if has_key(a:case, 'skip')
+    call s:assert.skip(a:case.skip)
+  else
+    const info_on_failure = $"# INPUT: \n{a:case.input.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
+    call InvokeExpand(a:case.input,
+      \ {-> s:assert.equals(GetBufState(), a:case.output, info_on_failure)})
+  endif
 endfunction
 
 function s:suite.before_each() abort
@@ -123,7 +194,11 @@ function s:suite.__test_by_testcases__() abort
     endfunction
 
     for [i, case] in cases->map({i, v -> [i + 1, v]})
-      let child[$'case-{i}'] = function('s:run_test_case', [case])
+      let key = $'case-{i}'
+      if has_key(case, 'description')
+        let key = $'{key} ({case.description})'
+      endif
+      let child[key] = function('s:run_test_case', [case])
     endfor
   endfor
 endfunction
