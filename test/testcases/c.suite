@@ -1,0 +1,26 @@
+# vim: noexpandtab
+prelude
+	file test-header.include.h
+input
+	#<<+CURSOR+>>
+output
+	#ifndef TEST_HEADER_INCLUDE_H_
+	#define TEST_HEADER_INCLUDE_H_
+	
+	<<+CURSOR+>>
+	
+	#endif  // TEST_HEADER_INCLUDE_H_
+
+input
+	#in<<+CURSOR+>>
+output
+	#include <<<+CURSOR+>>>
+
+input
+	#include <std<<+CURSOR+>>
+output
+	#include <stdio.h>
+	
+	int main(void) {
+		puts("Hello");<<+CURSOR+>>
+	}
