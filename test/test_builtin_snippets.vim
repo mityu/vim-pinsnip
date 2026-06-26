@@ -14,7 +14,7 @@ function s:parse_snip_line(text) abort
 endfunction
 
 function s:parse_into_sections(lines) abort
-  const tactics = ['input', 'output', 'description', 'skip']
+  const tactics = ['input', 'output', 'prelude', 'description', 'skip']
   let sections = []
   let sec = v:null
   let skip_body = v:false
@@ -86,7 +86,7 @@ function s:parse_into_cases_from_sections(sections) abort
       let case = {}
     endif
 
-    if index(['input', 'output'], sec.tactic) == -1
+    if index(['input', 'output', 'prelude'], sec.tactic) == -1
       if !empty(sec.body)
         call l:AddErr(sec.line, $'Tactic "{sec.tactic}" cannot have section body.')
       endif
@@ -101,8 +101,10 @@ function s:parse_into_cases_from_sections(sections) abort
     endif
 
     if !erroneous
-      if index(['input', 'output'], sec.tactic) == -1
+      if index(['input', 'output', 'prelude'], sec.tactic) == -1
         let case[sec.tactic] = sec.trailing_text
+      elseif sec.tactic == 'prelude'
+        let case[sec.tactic] = sec.body->join("\n")
       else
         let snip = #{ text: [] }
         for [nr, text] in sec.body->mapnew({ i, v -> [sec.line + i + 1, v] })
@@ -157,14 +159,49 @@ function s:parse_test_suite(file) abort
   return cases
 endfunction
 
-function s:run_test_case(case) abort
-  if has_key(a:case, 'skip')
-    call s:assert.skip(a:case.skip)
-  else
-    const info_on_failure = $"# INPUT: \n{a:case.input.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
-    call InvokeExpand(a:case.input,
-      \ {-> s:assert.equals(GetBufState(), a:case.output, info_on_failure)})
-  endif
+function s:gen_child_test_suite(key, case) abort
+  let child = themis#suite()
+
+  function child.before_each() abort closure
+    if has_key(a:case, 'prelude')
+      execute a:case.prelude
+    endif
+  endfunction
+
+  function child[a:key]() closure abort
+    if has_key(a:case, 'skip')
+      call s:assert.skip(a:case.skip)
+    else
+      const info_on_failure = $"# INPUT: \n{a:case.input.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
+      call InvokeExpand(a:case.input,
+        \ {-> s:assert.equals(GetBufState(), a:case.output, info_on_failure)})
+    endif
+  endfunction
+endfunction
+
+function s:gen_test_suite(file) abort
+  let cases = s:parse_test_suite(a:file)
+  let ft = fnamemodify(a:file, ':t:r')
+  let child = themis#suite($'ft={ft}')
+
+  function child.before_each() abort closure
+    if ft !=# '_'
+      execute $'set filetype={ft}'
+    endif
+
+    " Force shiftwidth() to return &tabstop to make internal indentation
+    " generator to use tab for indentation.
+    set shiftwidth=0
+    set noexpandtab
+  endfunction
+
+  for [i, case] in cases->map({i, v -> [i + 1, v]})
+    let key = $'case-{i}'
+    if has_key(case, 'description')
+      let key = $'{key} ({case.description})'
+    endif
+    let child[$'__{key}__'] = function('s:gen_child_test_suite', [key, case])
+  endfor
 endfunction
 
 function s:suite.before_each() abort
@@ -178,27 +215,6 @@ endfunction
 function s:suite.__test_by_testcases__() abort
   const suitefiles = globpath(expand('<script>:p:h'), 'testcases/*.suite', 0, 1)
   for file in suitefiles
-    let cases = s:parse_test_suite(file)
-    let ft = fnamemodify(file, ':t:r')
-    let child = themis#suite($'ft={ft}')
-
-    function child.before_each() abort closure
-      if ft !=# '_'
-        execute $'set filetype={ft}'
-      endif
-
-      " Force shiftwidth() to return &tabstop to make internal indentation
-      " generator to use tab for indentation.
-      set shiftwidth=0
-      set noexpandtab
-    endfunction
-
-    for [i, case] in cases->map({i, v -> [i + 1, v]})
-      let key = $'case-{i}'
-      if has_key(case, 'description')
-        let key = $'{key} ({case.description})'
-      endif
-      let child[key] = function('s:run_test_case', [case])
-    endfor
+    call s:gen_test_suite(file)
   endfor
 endfunction
