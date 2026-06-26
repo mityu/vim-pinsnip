@@ -159,6 +159,16 @@ function s:parse_test_suite(file) abort
   return cases
 endfunction
 
+function s:run_test_case(case) abort
+  if has_key(a:case, 'skip')
+    call s:assert.skip(a:case.skip)
+  else
+    const info_on_failure = $"# INPUT: \n{a:case.input.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
+    call InvokeExpand(a:case.input,
+      \ {-> s:assert.equals(GetBufState(), a:case.output, info_on_failure)})
+  endif
+endfunction
+
 function s:gen_child_test_suite(key, case) abort
   let child = themis#suite()
 
@@ -168,15 +178,7 @@ function s:gen_child_test_suite(key, case) abort
     endif
   endfunction
 
-  function child[a:key]() closure abort
-    if has_key(a:case, 'skip')
-      call s:assert.skip(a:case.skip)
-    else
-      const info_on_failure = $"# INPUT: \n{a:case.input.text->mapnew({_, v -> $"\t{v}"})->join("\n")}"
-      call InvokeExpand(a:case.input,
-        \ {-> s:assert.equals(GetBufState(), a:case.output, info_on_failure)})
-    endif
-  endfunction
+  let child[a:key] = function('s:run_test_case', [a:case])
 endfunction
 
 function s:gen_test_suite(file) abort
