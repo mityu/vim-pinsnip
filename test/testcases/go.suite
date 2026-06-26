@@ -57,3 +57,10 @@ input
 output
 	var f func(int, int) (int, error)
 	f = func(x, y int) (int, error) {<<+CURSOR+>>
+
+input
+	f := func(x, y int, z float) (int, error) {<<+CURSOR+>>
+
+output
+	var f func(int, int, float) (int, error)
+	f = func(x, y int, z float) (int, error) {<<+CURSOR+>>
