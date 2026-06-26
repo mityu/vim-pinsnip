@@ -115,6 +115,10 @@ function s:suite.__test_by_testcases__() abort
       if ft !=# '_'
         execute $'set filetype={ft}'
       endif
+
+      " Force shiftwidth() to return &tabstop to make internal indentation
+      " generator to use tab for indentation.
+      set shiftwidth=0
       set noexpandtab
     endfunction
 
