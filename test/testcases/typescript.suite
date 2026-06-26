@@ -1,0 +1,16 @@
+# vim: noexpandtab
+
+input
+	import<<+CURSOR+>>
+output
+	import {} from "<<+CURSOR+>>";
+
+input
+	im<<+CURSOR+>>
+output
+	import {} from "<<+CURSOR+>>";
+
+input
+	import {} from "xxx<<+CURSOR+>>";
+output
+	import {<<+CURSOR+>>} from "xxx";
